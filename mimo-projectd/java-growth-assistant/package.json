@@ -1,0 +1,30 @@
+{
+  "name": "java-growth-assistant",
+  "version": "1.0.0",
+  "description": "Java 程序员成长助手 - 技能评估与学习路线图",
+  "main": "./dist-electron/main/main.js",
+  "scripts": {
+    "dev": "vite",
+    "build": "vue-tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "postinstall": "electron-rebuild -f -w better-sqlite3"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.0.0",
+    "marked": "^12.0.0"
+  },
+  "devDependencies": {
+    "@electron/rebuild": "^3.7.0",
+    "@types/better-sqlite3": "^7.6.13",
+    "@vitejs/plugin-vue": "^5.2.0",
+    "electron": "^31.0.0",
+    "electron-vite": "^2.3.0",
+    "pinia": "^2.1.0",
+    "typescript": "^5.5.0",
+    "vite": "^5.4.0",
+    "vite-plugin-electron": "^0.28.0",
+    "vite-plugin-electron-renderer": "^0.14.0",
+    "vue": "^3.4.0",
+    "vue-tsc": "^2.0.0"
+  }
+}
