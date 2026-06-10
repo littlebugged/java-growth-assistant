@@ -41,7 +41,11 @@ export class Database {
         project_title TEXT,
         project_desc TEXT,
         estimated_days INTEGER,
-        status TEXT DEFAULT 'pending'
+        status TEXT DEFAULT 'pending',
+        dimension TEXT DEFAULT '',
+        dimension_score INTEGER DEFAULT 0,
+        priority TEXT DEFAULT 'medium',
+        resources TEXT DEFAULT '[]'
       );
 
       CREATE TABLE IF NOT EXISTS notes (
@@ -98,6 +102,27 @@ export class Database {
         explanation TEXT NOT NULL
       );
     `)
+
+    // 迁移：为旧数据库的 roadmap_stages 表添加新列
+    this.migrateRoadmapStages()
+  }
+
+  private migrateRoadmapStages() {
+    const columns = this.db.prepare("PRAGMA table_info(roadmap_stages)").all() as any[]
+    const colNames = columns.map((c: any) => c.name)
+
+    if (!colNames.includes('dimension')) {
+      this.db.exec("ALTER TABLE roadmap_stages ADD COLUMN dimension TEXT DEFAULT ''")
+    }
+    if (!colNames.includes('dimension_score')) {
+      this.db.exec("ALTER TABLE roadmap_stages ADD COLUMN dimension_score INTEGER DEFAULT 0")
+    }
+    if (!colNames.includes('priority')) {
+      this.db.exec("ALTER TABLE roadmap_stages ADD COLUMN priority TEXT DEFAULT 'medium'")
+    }
+    if (!colNames.includes('resources')) {
+      this.db.exec("ALTER TABLE roadmap_stages ADD COLUMN resources TEXT DEFAULT '[]'")
+    }
   }
 
   // ==================== 评估 ====================
@@ -152,7 +177,7 @@ export class Database {
     const roadmapId = info.lastInsertRowid as number
 
     const insertStage = this.db.prepare(
-      'INSERT INTO roadmap_stages (roadmap_id, stage_order, title, description, topics, project_title, project_desc, estimated_days, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+      'INSERT INTO roadmap_stages (roadmap_id, stage_order, title, description, topics, project_title, project_desc, estimated_days, status, dimension, dimension_score, priority, resources) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
     )
     for (const stage of roadmap.stages) {
       insertStage.run(
@@ -164,7 +189,11 @@ export class Database {
         stage.projectTitle,
         stage.projectDesc,
         stage.estimatedDays,
-        stage.status
+        stage.status,
+        stage.dimension ?? '',
+        stage.dimensionScore ?? 0,
+        stage.priority ?? 'medium',
+        JSON.stringify(stage.resources ?? [])
       )
     }
     return roadmapId
@@ -212,6 +241,10 @@ export class Database {
         projectDesc: s.project_desc,
         estimatedDays: s.estimated_days,
         status: s.status,
+        dimension: s.dimension ?? '',
+        dimensionScore: s.dimension_score ?? 0,
+        priority: s.priority ?? 'medium',
+        resources: JSON.parse(s.resources ?? '[]'),
       })),
     }
   }

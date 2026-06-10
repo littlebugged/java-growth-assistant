@@ -1,15 +1,19 @@
 import { defineStore } from 'pinia'
-import { ref, toRaw } from 'vue'
-import { roadmapTemplates } from '../data/roadmap-templates'
-import type { Roadmap, RoadmapStage, AssessmentResult, SkillLevel, StageStatus } from '../types'
-import { LEVEL_ORDER } from '../types'
+import { ref } from 'vue'
+import { dimensionStageTemplates } from '../data/roadmap-templates'
+import type { Roadmap, RoadmapStage, AssessmentResult, SkillLevel, SkillDimension, StageStatus, StagePriority, DimensionStageTemplate } from '../types'
+import { LEVEL_ORDER, DIMENSION_LABELS } from '../types'
 
 export const useRoadmapStore = defineStore('roadmap', () => {
   const currentRoadmap = ref<(Roadmap & { stages: RoadmapStage[] }) | null>(null)
   const history = ref<Roadmap[]>([])
 
-  function findTemplate(fromLevel: SkillLevel, toLevel: SkillLevel) {
-    return roadmapTemplates.find((t) => t.fromLevel === fromLevel && t.toLevel === toLevel)
+  /** 根据百分制分数定等级 */
+  function scoreToLevel(score: number): SkillLevel {
+    if (score >= 85) return 'expert'
+    if (score >= 65) return 'senior'
+    if (score >= 40) return 'intermediate'
+    return 'junior'
   }
 
   function getNextLevel(current: SkillLevel): SkillLevel {
@@ -18,34 +22,74 @@ export const useRoadmapStore = defineStore('roadmap', () => {
     return current
   }
 
-  async function generateRoadmap(assessment: AssessmentResult): Promise<Roadmap & { stages: RoadmapStage[] }> {
-    const fromLevel = assessment.level
-    const toLevel = getNextLevel(fromLevel)
-    const template = findTemplate(fromLevel, toLevel)
+  function findDimensionTemplate(dim: SkillDimension, fromLevel: SkillLevel, toLevel: SkillLevel): DimensionStageTemplate | undefined {
+    return dimensionStageTemplates.find(
+      (t) => t.dimension === dim && t.fromLevel === fromLevel && t.toLevel === toLevel
+    )
+  }
 
-    if (!template) {
-      throw new Error(`未找到从 ${fromLevel} 到 ${toLevel} 的路线图模板`)
+  function getPriority(score: number): StagePriority {
+    if (score < 40) return 'high'
+    if (score < 65) return 'medium'
+    return 'low'
+  }
+
+  async function generateRoadmap(assessment: AssessmentResult): Promise<Roadmap & { stages: RoadmapStage[] }> {
+    const dims: SkillDimension[] = ['javaBasics', 'jvm', 'concurrency', 'spring', 'database', 'architecture']
+    const stages: RoadmapStage[] = []
+
+    for (const dim of dims) {
+      const score = assessment.scores[dim] ?? 0
+      const dimLevel = scoreToLevel(score)
+
+      // 已是专家，跳过
+      if (dimLevel === 'expert') continue
+
+      const nextLevel = getNextLevel(dimLevel)
+      const template = findDimensionTemplate(dim, dimLevel, nextLevel)
+      if (!template) continue
+
+      // 强项（>=80）天数减半
+      const isStrong = score >= 80
+      const adjustedDays = isStrong ? Math.ceil(template.estimatedDays / 2) : template.estimatedDays
+
+      stages.push({
+        stageOrder: 0, // 后面排序
+        title: template.title,
+        description: template.description,
+        topics: template.topics,
+        projectTitle: template.projectTitle,
+        projectDesc: template.projectDesc,
+        estimatedDays: adjustedDays,
+        status: 'pending' as StageStatus,
+        dimension: dim,
+        dimensionScore: score,
+        priority: getPriority(score),
+        resources: template.resources ?? [],
+      })
     }
 
-    const totalWeeks = Math.ceil(
-      template.stages.reduce((sum, s) => sum + s.estimatedDays, 0) / 7
-    )
+    // 按分数升序排序（弱项优先）
+    stages.sort((a, b) => a.dimensionScore - b.dimensionScore)
+    stages.forEach((s, i) => { s.stageOrder = i + 1 })
+
+    // 确定整体目标等级
+    const overallLevel = assessment.level
+    const targetLevel = getNextLevel(overallLevel)
+    const totalWeeks = Math.ceil(stages.reduce((sum, s) => sum + s.estimatedDays, 0) / 7)
 
     const roadmap: Roadmap & { stages: RoadmapStage[] } = {
-      title: template.title,
-      targetLevel: toLevel,
+      title: `个性化进阶路线（${overallLevel} → ${targetLevel}）`,
+      targetLevel,
       estimatedWeeks: totalWeeks,
       status: 'active',
       assessmentId: assessment.id,
-      stages: template.stages.map((s) => ({
-        ...s,
-        status: 'pending' as StageStatus,
-      })),
+      stages,
     }
 
     // 保存到数据库
     try {
-      const id = await window.api.saveRoadmap(toRaw(roadmap))
+      const id = await window.api.saveRoadmap(JSON.parse(JSON.stringify(roadmap)))
       roadmap.id = id
     } catch (e) {
       console.error('保存路线图失败:', e)
@@ -85,6 +129,26 @@ export const useRoadmapStore = defineStore('roadmap', () => {
     return Math.round((completed / currentRoadmap.value.stages.length) * 100)
   }
 
+  /** 获取弱项维度（分数最低的前 N 个） */
+  function getWeakDimensions(n: number = 2): { dimension: SkillDimension; score: number }[] {
+    if (!currentRoadmap.value) return []
+    const dims = currentRoadmap.value.stages.map((s) => ({
+      dimension: s.dimension,
+      score: s.dimensionScore,
+    }))
+    return dims.slice(0, n)
+  }
+
+  /** 获取强项维度（分数最高的） */
+  function getStrongDimensions(): { dimension: SkillDimension; score: number }[] {
+    if (!currentRoadmap.value) return []
+    const dims = currentRoadmap.value.stages.map((s) => ({
+      dimension: s.dimension,
+      score: s.dimensionScore,
+    }))
+    return dims.filter((d) => d.score >= 80)
+  }
+
   return {
     currentRoadmap,
     history,
@@ -92,5 +156,8 @@ export const useRoadmapStore = defineStore('roadmap', () => {
     loadActiveRoadmap,
     updateStageStatus,
     getCompletionPercentage,
+    getWeakDimensions,
+    getStrongDimensions,
+    scoreToLevel,
   }
 })

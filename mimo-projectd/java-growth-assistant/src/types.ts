@@ -54,6 +54,9 @@ export type StageStatus = 'pending' | 'in_progress' | 'completed'
 /** 路线图状态 */
 export type RoadmapStatus = 'active' | 'completed' | 'archived'
 
+/** 优先级 */
+export type StagePriority = 'high' | 'medium' | 'low'
+
 /** 路线图阶段 */
 export interface RoadmapStage {
   id?: number
@@ -66,6 +69,10 @@ export interface RoadmapStage {
   projectDesc: string
   estimatedDays: number
   status: StageStatus
+  dimension: SkillDimension
+  dimensionScore: number
+  priority: StagePriority
+  resources?: string[]
 }
 
 /** 路线图 */
@@ -80,14 +87,18 @@ export interface Roadmap {
   stages: RoadmapStage[]
 }
 
-/** 路线图模板 */
-export interface RoadmapTemplate {
-  id: string
+/** 维度阶段模板 */
+export interface DimensionStageTemplate {
+  dimension: SkillDimension
   fromLevel: SkillLevel
   toLevel: SkillLevel
   title: string
   description: string
-  stages: Omit<RoadmapStage, 'id' | 'roadmapId' | 'status'>[]
+  topics: string[]
+  projectTitle: string
+  projectDesc: string
+  estimatedDays: number
+  resources?: string[]
 }
 
 // ==================== 维度名称映射 ====================
@@ -109,6 +120,18 @@ export const LEVEL_LABELS: Record<SkillLevel, string> = {
 }
 
 export const LEVEL_ORDER: SkillLevel[] = ['junior', 'intermediate', 'senior', 'expert']
+
+export const PRIORITY_LABELS: Record<StagePriority, string> = {
+  high: '重点',
+  medium: '推荐',
+  low: '选修',
+}
+
+export const PRIORITY_COLORS: Record<StagePriority, string> = {
+  high: '#ef4444',
+  medium: '#f59e0b',
+  low: '#22c55e',
+}
 
 // ==================== 笔记 ====================
 
