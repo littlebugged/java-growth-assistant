@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { ref, toRaw } from 'vue'
+import { ref } from 'vue'
 import type { BlogPost } from '../types'
 
 export const useBlogStore = defineStore('blog', () => {
@@ -15,7 +15,7 @@ export const useBlogStore = defineStore('blog', () => {
   }
 
   async function save(post: BlogPost): Promise<number> {
-    const id = await window.api.saveBlogPost(toRaw(post))
+    const id = await window.api.saveBlogPost(JSON.parse(JSON.stringify(post)))
     await loadAll()
     return id
   }

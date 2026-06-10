@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { ref, computed, toRaw } from 'vue'
+import { ref, computed } from 'vue'
 import type { InterviewQuestion, InterviewCategory } from '../types'
 import { INTERVIEW_CATEGORY_LABELS } from '../types'
 
@@ -82,7 +82,7 @@ export const useInterviewStore = defineStore('interview', () => {
 
   // CRUD
   async function saveQuestion(q: InterviewQuestion) {
-    await window.api.saveInterviewQuestion(toRaw(q))
+    await window.api.saveInterviewQuestion(JSON.parse(JSON.stringify(q)))
     await loadAll()
   }
 

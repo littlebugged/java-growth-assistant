@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { ref, toRaw } from 'vue'
+import { ref } from 'vue'
 import type { Note } from '../types'
 
 export const useNotesStore = defineStore('notes', () => {
@@ -15,7 +15,7 @@ export const useNotesStore = defineStore('notes', () => {
   }
 
   async function save(note: Note): Promise<number> {
-    const id = await window.api.saveNote(toRaw(note))
+    const id = await window.api.saveNote(JSON.parse(JSON.stringify(note)))
     await loadAll()
     return id
   }

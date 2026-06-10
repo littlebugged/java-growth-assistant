@@ -1,13 +1,19 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, watch } from 'vue'
 import { useInterviewStore } from '../stores/interview'
+import { useQuestionBankStore } from '../stores/questionBank'
 import { INTERVIEW_CATEGORY_LABELS } from '../types'
 import type { InterviewQuestion, InterviewCategory } from '../types'
 
 const store = useInterviewStore()
+const questionBank = useQuestionBankStore()
 
 const showForm = ref(false)
+const showUpdateConfirm = ref(false)
+const updateMsg = ref('')
 const editingId = ref<string | null>(null)
+const saveStatus = ref<'idle' | 'saving' | 'saved'>('idle')
+let saveTimer: ReturnType<typeof setTimeout> | null = null
 const form = ref<InterviewQuestion>({
   id: '',
   category: 'java',
@@ -21,6 +27,32 @@ const form = ref<InterviewQuestion>({
 onMounted(() => {
   store.loadAll()
 })
+
+// 自动保存：防抖 1.5 秒
+watch(
+  () => [form.value.question, form.value.answer, form.value.category, form.value.difficulty, form.value.keyPoints, form.value.followUp],
+  () => {
+    if (!showForm.value) return
+    if (!form.value.question.trim() || !form.value.answer.trim()) return
+    if (saveTimer) clearTimeout(saveTimer)
+    saveTimer = setTimeout(() => autoSave(), 1500)
+  },
+  { deep: true }
+)
+
+async function autoSave() {
+  saveStatus.value = 'saving'
+  try {
+    const data = JSON.parse(JSON.stringify(form.value))
+    data.keyPoints = data.keyPoints.filter(p => p.trim())
+    data.followUp = (data.followUp ?? []).filter(p => p.trim())
+    await store.saveQuestion(data)
+    saveStatus.value = 'saved'
+    setTimeout(() => { saveStatus.value = 'idle' }, 2000)
+  } catch {
+    saveStatus.value = 'idle'
+  }
+}
 
 function handleNew() {
   editingId.value = null
@@ -42,11 +74,20 @@ function handleEdit(q: InterviewQuestion) {
   showForm.value = true
 }
 
+function handleCancel() {
+  if (saveTimer) clearTimeout(saveTimer)
+  saveStatus.value = 'idle'
+  showForm.value = false
+}
+
 async function handleSave() {
   if (!form.value.question.trim() || !form.value.answer.trim()) return
-  form.value.keyPoints = form.value.keyPoints.filter(p => p.trim())
-  form.value.followUp = (form.value.followUp ?? []).filter(p => p.trim())
-  await store.saveQuestion(form.value)
+  const data = JSON.parse(JSON.stringify(form.value))
+  data.keyPoints = data.keyPoints.filter(p => p.trim())
+  data.followUp = (data.followUp ?? []).filter(p => p.trim())
+  if (saveTimer) clearTimeout(saveTimer)
+  await store.saveQuestion(data)
+  saveStatus.value = 'idle'
   showForm.value = false
 }
 
@@ -61,6 +102,22 @@ function removeFollowUp(i: number) { form.value.followUp?.splice(i, 1) }
 
 function formatAnswer(text: string): string {
   return text.replace(/\n/g, '<br>')
+}
+
+function handleUpdateInterview() {
+  showUpdateConfirm.value = true
+}
+
+async function confirmUpdateInterview() {
+  showUpdateConfirm.value = false
+  try {
+    const r = await questionBank.update('interview')
+    updateMsg.value = `已更新 ${r.interviewCount} 道面试题`
+    await store.loadAll()
+  } catch {
+    updateMsg.value = questionBank.error || '更新失败'
+  }
+  setTimeout(() => { updateMsg.value = '' }, 4000)
 }
 
 const categoryOptions = Object.entries(INTERVIEW_CATEGORY_LABELS).map(([k, v]) => ({ value: k, label: v }))
@@ -83,6 +140,23 @@ const categoryOptions = Object.entries(INTERVIEW_CATEGORY_LABELS).map(([k, v]) =
           @input="store.handleSearch()"
         />
         <button class="btn btn-primary" @click="handleNew">+ 新增题目</button>
+        <div class="update-wrapper">
+          <button
+            class="btn btn-outline"
+            :disabled="questionBank.loading"
+            @click="handleUpdateInterview"
+          >
+            {{ questionBank.loading ? '更新中...' : '🔄 更新题库' }}
+          </button>
+          <div v-if="showUpdateConfirm" class="confirm-popover">
+            <div class="confirm-text">从远程仓库拉取最新面试题库，覆盖本地数据，确定？</div>
+            <div class="confirm-actions">
+              <button class="confirm-btn cancel" @click="showUpdateConfirm = false">取消</button>
+              <button class="confirm-btn ok" @click="confirmUpdateInterview">确定</button>
+            </div>
+          </div>
+        </div>
+        <div v-if="updateMsg" class="update-msg">{{ updateMsg }}</div>
       </div>
       <div class="category-tabs">
         <button
@@ -102,7 +176,13 @@ const categoryOptions = Object.entries(INTERVIEW_CATEGORY_LABELS).map(([k, v]) =
 
     <!-- 新增/编辑表单 -->
     <div v-if="showForm" class="form-card">
-      <h3>{{ editingId ? '编辑题目' : '新增题目' }}</h3>
+      <div class="form-header">
+        <h3>{{ editingId ? '编辑题目' : '新增题目' }}</h3>
+        <span class="save-status" :class="saveStatus">
+          <template v-if="saveStatus === 'saving'">保存中...</template>
+          <template v-else-if="saveStatus === 'saved'">已保存 ✓</template>
+        </span>
+      </div>
       <div class="form-row">
         <label>类别</label>
         <select v-model="form.category" class="form-select">
@@ -143,7 +223,7 @@ const categoryOptions = Object.entries(INTERVIEW_CATEGORY_LABELS).map(([k, v]) =
       </div>
       <div class="form-actions">
         <button class="btn btn-primary" @click="handleSave">保存</button>
-        <button class="btn btn-outline" @click="showForm = false">取消</button>
+        <button class="btn btn-outline" @click="handleCancel">取消</button>
       </div>
     </div>
 
@@ -226,7 +306,11 @@ const categoryOptions = Object.entries(INTERVIEW_CATEGORY_LABELS).map(([k, v]) =
   background: var(--bg-card); border: 1px solid var(--accent-dim);
   border-radius: 12px; padding: 24px; margin-bottom: 20px;
 }
-.form-card h3 { font-size: 16px; font-weight: 600; color: var(--text-primary); margin: 0 0 16px 0; }
+.form-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+.form-header h3 { font-size: 16px; font-weight: 600; color: var(--text-primary); margin: 0; }
+.save-status { font-size: 13px; padding: 4px 10px; border-radius: 6px; transition: all 0.3s; }
+.save-status.saving { color: var(--text-secondary); }
+.save-status.saved { color: #4ade80; background: rgba(34, 197, 94, 0.1); }
 .form-row { margin-bottom: 14px; }
 .form-row label { display: block; font-size: 13px; font-weight: 600; color: var(--text-secondary); margin-bottom: 6px; }
 .form-input, .form-select, .form-textarea {
@@ -297,4 +381,26 @@ const categoryOptions = Object.entries(INTERVIEW_CATEGORY_LABELS).map(([k, v]) =
 .btn-icon:hover { color: var(--danger); }
 .empty-state { text-align: center; padding: 60px 20px; }
 .empty-state p { color: var(--text-secondary); font-size: 14px; }
+
+.update-wrapper { position: relative; }
+.confirm-popover {
+  position: absolute; top: 100%; right: 0; margin-top: 8px; z-index: 10;
+  padding: 12px 14px; border-radius: 8px;
+  background: var(--bg-card); border: 1px solid var(--border);
+  box-shadow: 0 4px 16px rgba(0,0,0,0.4); width: 240px;
+}
+.confirm-text { font-size: 12px; color: var(--text-secondary); line-height: 1.5; margin-bottom: 10px; }
+.confirm-actions { display: flex; gap: 8px; justify-content: flex-end; }
+.confirm-btn {
+  padding: 4px 14px; border-radius: 4px; border: 1px solid var(--border);
+  font-size: 12px; cursor: pointer; transition: all 0.15s;
+}
+.confirm-btn.cancel { background: transparent; color: var(--text-secondary); }
+.confirm-btn.cancel:hover { background: var(--bg-hover); }
+.confirm-btn.ok { background: var(--accent); color: #fff; border-color: var(--accent); }
+.confirm-btn.ok:hover { background: var(--accent-hover); }
+.update-msg {
+  font-size: 12px; color: var(--success); padding: 8px 12px;
+  background: rgba(34,197,94,0.1); border-radius: 6px; white-space: nowrap;
+}
 </style>

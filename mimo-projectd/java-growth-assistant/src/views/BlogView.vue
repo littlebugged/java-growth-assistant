@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted, computed, watch } from 'vue'
 import { marked } from 'marked'
 import { useBlogStore } from '../stores/blog'
 import { DIMENSION_LABELS } from '../types'
@@ -10,6 +10,8 @@ const store = useBlogStore()
 const editing = ref(false)
 const preview = ref(false)
 const editPost = ref<BlogPost>(store.createNew())
+const saveStatus = ref<'idle' | 'saving' | 'saved'>('idle')
+let saveTimer: ReturnType<typeof setTimeout> | null = null
 
 onMounted(() => store.loadAll())
 
@@ -21,6 +23,29 @@ const dimensionOptions = [
 const renderedContent = computed(() => {
   return marked(editPost.value.content || '') as string
 })
+
+// 自动保存：防抖 1.5 秒
+watch(
+  () => [editPost.value.title, editPost.value.content, editPost.value.dimension, editPost.value.published],
+  () => {
+    if (!editing.value) return
+    if (!editPost.value.title.trim()) return
+    if (saveTimer) clearTimeout(saveTimer)
+    saveTimer = setTimeout(() => autoSave(), 1500)
+  },
+  { deep: true }
+)
+
+async function autoSave() {
+  saveStatus.value = 'saving'
+  try {
+    await store.save(JSON.parse(JSON.stringify(editPost.value)))
+    saveStatus.value = 'saved'
+    setTimeout(() => { saveStatus.value = 'idle' }, 2000)
+  } catch {
+    saveStatus.value = 'idle'
+  }
+}
 
 function handleNew() {
   editPost.value = store.createNew()
@@ -36,7 +61,7 @@ function handleEdit(post: BlogPost) {
 
 async function handleSave() {
   if (!editPost.value.title.trim()) return
-  await store.save(editPost.value)
+  await store.save(JSON.parse(JSON.stringify(editPost.value)))
   editing.value = false
 }
 
@@ -45,6 +70,8 @@ async function handleDelete(id: number) {
 }
 
 function handleCancel() {
+  if (saveTimer) clearTimeout(saveTimer)
+  saveStatus.value = 'idle'
   editing.value = false
 }
 
@@ -106,6 +133,10 @@ function handleExport() {
             {{ preview ? '编辑' : '预览' }}
           </button>
           <button class="btn btn-outline" @click="handleExport">导出 MD</button>
+          <span class="save-status" :class="saveStatus">
+            <template v-if="saveStatus === 'saving'">保存中...</template>
+            <template v-else-if="saveStatus === 'saved'">已保存 ✓</template>
+          </span>
         </div>
         <div class="edit-header-right">
           <select v-model="editPost.dimension" class="filter-select">
@@ -371,4 +402,7 @@ function handleExport() {
 .btn-primary:hover { background: var(--accent-hover); }
 .btn-outline { background: transparent; color: var(--text-secondary); border: 1px solid var(--border); }
 .btn-outline:hover { border-color: var(--text-secondary); }
+.save-status { font-size: 13px; padding: 4px 10px; border-radius: 6px; transition: all 0.3s; }
+.save-status.saving { color: var(--text-secondary); }
+.save-status.saved { color: #4ade80; background: rgba(34, 197, 94, 0.1); }
 </style>

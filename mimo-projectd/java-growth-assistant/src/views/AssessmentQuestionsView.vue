@@ -1,14 +1,20 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, watch } from 'vue'
+import { useQuestionBankStore } from '../stores/questionBank'
 import { DIMENSION_LABELS } from '../types'
 import type { Question, SkillDimension, QuestionOption } from '../types'
 
+const questionBank = useQuestionBankStore()
 const questions = ref<Question[]>([])
 const totalCount = ref(0)
 const searchQuery = ref('')
 const filterDimension = ref<string>('all')
 const showForm = ref(false)
 const editingId = ref<string | null>(null)
+const showUpdateConfirm = ref(false)
+const updateMsg = ref('')
+const saveStatus = ref<'idle' | 'saving' | 'saved'>('idle')
+let saveTimer: ReturnType<typeof setTimeout> | null = null
 
 const form = ref<Question>({
   id: '',
@@ -28,6 +34,29 @@ const form = ref<Question>({
 const dimensionOptions = Object.entries(DIMENSION_LABELS).map(([k, v]) => ({ value: k, label: v }))
 
 onMounted(() => loadAll())
+
+// 自动保存：防抖 1.5 秒
+watch(
+  () => [form.value.title, form.value.dimension, form.value.difficulty, form.value.options, form.value.answer, form.value.explanation],
+  () => {
+    if (!showForm.value) return
+    if (!form.value.title.trim()) return
+    if (saveTimer) clearTimeout(saveTimer)
+    saveTimer = setTimeout(() => autoSave(), 1500)
+  },
+  { deep: true }
+)
+
+async function autoSave() {
+  saveStatus.value = 'saving'
+  try {
+    await window.api.saveAssessmentQuestion(JSON.parse(JSON.stringify(form.value)))
+    saveStatus.value = 'saved'
+    setTimeout(() => { saveStatus.value = 'idle' }, 2000)
+  } catch {
+    saveStatus.value = 'idle'
+  }
+}
 
 async function loadAll() {
   questions.value = await window.api.getAllAssessmentQuestions()
@@ -75,9 +104,17 @@ function handleEdit(q: Question) {
   showForm.value = true
 }
 
+function handleCancel() {
+  if (saveTimer) clearTimeout(saveTimer)
+  saveStatus.value = 'idle'
+  showForm.value = false
+}
+
 async function handleSave() {
   if (!form.value.title.trim()) return
-  await window.api.saveAssessmentQuestion(form.value)
+  if (saveTimer) clearTimeout(saveTimer)
+  await window.api.saveAssessmentQuestion(JSON.parse(JSON.stringify(form.value)))
+  saveStatus.value = 'idle'
   showForm.value = false
   await loadAll()
 }
@@ -89,6 +126,22 @@ async function handleDelete(id: string) {
 
 function getDimLabel(dim: string): string {
   return DIMENSION_LABELS[dim as SkillDimension] ?? dim
+}
+
+function handleUpdateAssessment() {
+  showUpdateConfirm.value = true
+}
+
+async function confirmUpdateAssessment() {
+  showUpdateConfirm.value = false
+  try {
+    const r = await questionBank.update('assessment')
+    updateMsg.value = `已更新 ${r.assessmentCount} 道评估题`
+    await loadAll()
+  } catch {
+    updateMsg.value = questionBank.error || '更新失败'
+  }
+  setTimeout(() => { updateMsg.value = '' }, 4000)
 }
 </script>
 
@@ -108,12 +161,35 @@ function getDimLabel(dim: string): string {
           <option v-for="opt in dimensionOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
         </select>
         <button class="btn btn-primary" @click="handleNew">+ 新增题目</button>
+        <div class="update-wrapper">
+          <button
+            class="btn btn-outline"
+            :disabled="questionBank.loading"
+            @click="handleUpdateAssessment"
+          >
+            {{ questionBank.loading ? '更新中...' : '🔄 更新题库' }}
+          </button>
+          <div v-if="showUpdateConfirm" class="confirm-popover">
+            <div class="confirm-text">从远程仓库拉取最新评估题库，覆盖本地数据，确定？</div>
+            <div class="confirm-actions">
+              <button class="confirm-btn cancel" @click="showUpdateConfirm = false">取消</button>
+              <button class="confirm-btn ok" @click="confirmUpdateAssessment">确定</button>
+            </div>
+          </div>
+        </div>
+        <div v-if="updateMsg" class="update-msg">{{ updateMsg }}</div>
       </div>
     </div>
 
     <!-- 表单 -->
     <div v-if="showForm" class="form-card">
-      <h3>{{ editingId ? '编辑题目' : '新增题目' }}</h3>
+      <div class="form-header">
+        <h3>{{ editingId ? '编辑题目' : '新增题目' }}</h3>
+        <span class="save-status" :class="saveStatus">
+          <template v-if="saveStatus === 'saving'">保存中...</template>
+          <template v-else-if="saveStatus === 'saved'">已保存 ✓</template>
+        </span>
+      </div>
       <div class="form-row">
         <label>维度</label>
         <select v-model="form.dimension" class="form-select">
@@ -154,7 +230,7 @@ function getDimLabel(dim: string): string {
       </div>
       <div class="form-actions">
         <button class="btn btn-primary" @click="handleSave">保存</button>
-        <button class="btn btn-outline" @click="showForm = false">取消</button>
+        <button class="btn btn-outline" @click="handleCancel">取消</button>
       </div>
     </div>
 
@@ -210,7 +286,11 @@ function getDimLabel(dim: string): string {
   background: var(--bg-card); border: 1px solid var(--accent-dim);
   border-radius: 12px; padding: 24px; margin-bottom: 20px;
 }
-.form-card h3 { font-size: 16px; font-weight: 600; color: var(--text-primary); margin: 0 0 16px 0; }
+.form-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+.form-header h3 { font-size: 16px; font-weight: 600; color: var(--text-primary); margin: 0; }
+.save-status { font-size: 13px; padding: 4px 10px; border-radius: 6px; transition: all 0.3s; }
+.save-status.saving { color: var(--text-secondary); }
+.save-status.saved { color: #4ade80; background: rgba(34, 197, 94, 0.1); }
 .form-row { margin-bottom: 14px; }
 .form-row label { display: block; font-size: 13px; font-weight: 600; color: var(--text-secondary); margin-bottom: 6px; }
 .form-input, .form-select, .form-textarea {
@@ -267,4 +347,26 @@ function getDimLabel(dim: string): string {
 .btn-outline:hover { border-color: var(--text-secondary); }
 .empty-state { text-align: center; padding: 60px 20px; }
 .empty-state p { color: var(--text-secondary); font-size: 14px; }
+
+.update-wrapper { position: relative; }
+.confirm-popover {
+  position: absolute; top: 100%; right: 0; margin-top: 8px; z-index: 10;
+  padding: 12px 14px; border-radius: 8px;
+  background: var(--bg-card); border: 1px solid var(--border);
+  box-shadow: 0 4px 16px rgba(0,0,0,0.4); width: 240px;
+}
+.confirm-text { font-size: 12px; color: var(--text-secondary); line-height: 1.5; margin-bottom: 10px; }
+.confirm-actions { display: flex; gap: 8px; justify-content: flex-end; }
+.confirm-btn {
+  padding: 4px 14px; border-radius: 4px; border: 1px solid var(--border);
+  font-size: 12px; cursor: pointer; transition: all 0.15s;
+}
+.confirm-btn.cancel { background: transparent; color: var(--text-secondary); }
+.confirm-btn.cancel:hover { background: var(--bg-hover); }
+.confirm-btn.ok { background: var(--accent); color: #fff; border-color: var(--accent); }
+.confirm-btn.ok:hover { background: var(--accent-hover); }
+.update-msg {
+  font-size: 12px; color: var(--success); padding: 8px 12px;
+  background: rgba(34,197,94,0.1); border-radius: 6px; white-space: nowrap;
+}
 </style>

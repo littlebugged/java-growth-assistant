@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted, computed, watch } from 'vue'
 import { marked } from 'marked'
 import { useNotesStore } from '../stores/notes'
 import { DIMENSION_LABELS } from '../types'
@@ -13,6 +13,8 @@ const editNote = ref<Note>(store.createNew())
 const searchQuery = ref('')
 const filterDimension = ref<string>('all')
 const saveError = ref('')
+const saveStatus = ref<'idle' | 'saving' | 'saved'>('idle')
+let saveTimer: ReturnType<typeof setTimeout> | null = null
 
 onMounted(() => store.loadAll())
 
@@ -31,6 +33,31 @@ const filteredNotes = computed(() => {
 })
 
 const renderedContent = computed(() => marked(editNote.value.content || '') as string)
+
+// 自动保存：防抖 1.5 秒
+watch(
+  () => [editNote.value.title, editNote.value.content, editNote.value.dimension],
+  () => {
+    if (!editing.value) return
+    if (!editNote.value.title.trim()) return
+    if (saveTimer) clearTimeout(saveTimer)
+    saveTimer = setTimeout(() => autoSave(), 1500)
+  },
+  { deep: true }
+)
+
+async function autoSave() {
+  saveStatus.value = 'saving'
+  saveError.value = ''
+  try {
+    await store.save(JSON.parse(JSON.stringify(editNote.value)))
+    saveStatus.value = 'saved'
+    setTimeout(() => { saveStatus.value = 'idle' }, 2000)
+  } catch (e: any) {
+    saveStatus.value = 'idle'
+    saveError.value = '自动保存失败: ' + (e.message || '未知错误')
+  }
+}
 
 function handleNew() {
   editNote.value = store.createNew()
@@ -51,7 +78,7 @@ async function handleSave() {
     return
   }
   try {
-    await store.save(editNote.value)
+    await store.save(JSON.parse(JSON.stringify(editNote.value)))
     editing.value = false
   } catch (e: any) {
     saveError.value = '保存失败: ' + (e.message || '未知错误')
@@ -63,6 +90,8 @@ async function handleDelete(id: number) {
 }
 
 function handleCancel() {
+  if (saveTimer) clearTimeout(saveTimer)
+  saveStatus.value = 'idle'
   editing.value = false
 }
 </script>
@@ -108,6 +137,10 @@ function handleCancel() {
           <button class="btn btn-outline" :class="{ active: preview }" @click="preview = !preview">
             {{ preview ? '编辑' : '预览' }}
           </button>
+          <span class="save-status" :class="saveStatus">
+            <template v-if="saveStatus === 'saving'">保存中...</template>
+            <template v-else-if="saveStatus === 'saved'">已保存 ✓</template>
+          </span>
         </div>
         <button class="btn btn-primary" @click="handleSave">保存</button>
       </div>
@@ -168,4 +201,7 @@ function handleCancel() {
 .btn-outline { background: transparent; color: var(--text-secondary); border: 1px solid var(--border); }
 .btn-outline:hover { border-color: var(--text-secondary); }
 .save-error { color: var(--danger); font-size: 13px; margin-top: 8px; text-align: right; }
+.save-status { font-size: 13px; padding: 4px 10px; border-radius: 6px; transition: all 0.3s; }
+.save-status.saving { color: var(--text-secondary); }
+.save-status.saved { color: #4ade80; background: rgba(34, 197, 94, 0.1); }
 </style>
